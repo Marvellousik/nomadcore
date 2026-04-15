@@ -3,10 +3,10 @@
 import { revalidatePath } from 'next/cache';
 import { supabaseServer } from './supabase-server';
 
-export async function updateRoutePrice(routeId: number, newPrice: number) {
+export async function updateRoutePrice(routeId: number, newBasePrice: number) {
   const { error } = await supabaseServer
     .from('routes')
-    .update({ price: newPrice })
+    .update({ base_price: newBasePrice })
     .eq('id', routeId);
 
   if (error) throw new Error(error.message);
@@ -16,7 +16,7 @@ export async function updateRoutePrice(routeId: number, newPrice: number) {
 export async function applySurgeProtocol(routeId: number) {
   const { data: route, error: fetchError } = await supabaseServer
     .from('routes')
-    .select('price')
+    .select('base_price')
     .eq('id', routeId)
     .single();
 
@@ -24,11 +24,11 @@ export async function applySurgeProtocol(routeId: number) {
     throw new Error(fetchError?.message || 'Route not found');
   }
 
-  const newPrice = Math.round(route.price * 1.15);
+  const newPrice = Math.round(route.base_price * 1.15);
 
   const { error } = await supabaseServer
     .from('routes')
-    .update({ price: newPrice })
+    .update({ base_price: newPrice })
     .eq('id', routeId);
 
   if (error) throw new Error(error.message);
@@ -39,7 +39,7 @@ export async function applySurgeProtocol(routeId: number) {
 export async function scheduleOverflowBus(routeId: number, extraSeats: number) {
   const { data: route, error: fetchError } = await supabaseServer
     .from('routes')
-    .select('available_seats')
+    .select('total_seats')
     .eq('id', routeId)
     .single();
 
@@ -47,13 +47,23 @@ export async function scheduleOverflowBus(routeId: number, extraSeats: number) {
     throw new Error(fetchError?.message || 'Route not found');
   }
 
-  const currentSeats = route.available_seats ?? 0;
-
   const { error } = await supabaseServer
     .from('routes')
-    .update({ available_seats: currentSeats + extraSeats })
+    .update({ total_seats: route.total_seats + extraSeats })
     .eq('id', routeId);
 
   if (error) throw new Error(error.message);
   revalidatePath('/');
+}
+
+export async function expireOldBookings() {
+  const { error } = await supabaseServer
+    .from('bookings')
+    .update({ status: 'expired' })
+    .eq('status', 'pending')
+    .lt('payment_expires_at', new Date().toISOString());
+
+  if (error) throw new Error(error.message);
+  revalidatePath('/');
+  return true;
 }

@@ -9,7 +9,7 @@ export function getTotalRevenue(bookings: Booking[], routes: Route[]) {
   bookings.forEach((booking) => {
     if (booking.status === 'confirmed') {
       const route = routes.find((r) => r.id === booking.route_id);
-      if (route) revenue += route.price;
+      if (route) revenue += route.base_price;
     }
   });
   return revenue;
@@ -47,7 +47,7 @@ export function generateAIInsight(bookings: Booking[], routes: Route[]) {
     ? `${popular.route.origin} to ${popular.route.destination}`
     : popular.route.name;
 
-  const seats = popular.route.available_seats ?? 0;
+  const seats = popular.route.total_seats ?? 0;
 
   return `Trend Alert: The ${displayName} route is experiencing unusually high demand (${popular.count} recent bookings). Recommendation: Consider increasing the fare by 15%${seats > 0 ? ` for the remaining ${seats} seats to maximize profit` : ''}, or schedule an overflow bus.`;
 }

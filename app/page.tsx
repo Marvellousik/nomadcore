@@ -12,7 +12,9 @@ import {
   updateRoutePrice,
   applySurgeProtocol,
   scheduleOverflowBus,
+  expireOldBookings,
 } from '../lib/actions';
+import { computeDynamicPrice } from '../lib/pricing';
 import type { Route, Booking } from '../lib/mockData';
 
 export default function Dashboard() {
@@ -21,10 +23,19 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [surging, setSurging] = useState(false);
+  const [purging, setPurging] = useState(false);
 
   async function refreshRoutes() {
     const { data } = await supabase.from('routes').select('*').order('name');
     if (data) setRoutes(data);
+  }
+
+  async function refreshBookings() {
+    const { data } = await supabase
+      .from('bookings')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (data) setBookings(data);
   }
 
   useEffect(() => {
@@ -97,6 +108,29 @@ export default function Dashboard() {
     }
   }
 
+  async function handlePurge() {
+    setPurging(true);
+    try {
+      await expireOldBookings();
+      await refreshBookings();
+    } catch (e: any) {
+      alert('Failed to purge expired bookings: ' + e.message);
+    } finally {
+      setPurging(false);
+    }
+  }
+
+  function getRouteStats(routeId: number) {
+    const route = routes.find((r) => r.id === routeId);
+    if (!route) return { remaining: 0, currentPrice: 0 };
+    const active = bookings.filter(
+      (b) => b.route_id === routeId && (b.status === 'pending' || b.status === 'confirmed')
+    ).length;
+    const remaining = Math.max(0, route.total_seats - active);
+    const currentPrice = computeDynamicPrice(route.base_price, remaining);
+    return { remaining, currentPrice };
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-50 flex items-center justify-center">
@@ -159,26 +193,25 @@ export default function Dashboard() {
             <p className="text-xl font-light leading-relaxed text-slate-200 mb-6">
               {aiInsight}
             </p>
-            <button
-              onClick={handleSurge}
-              disabled={surging || !popularRoute.route}
-              className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 text-white px-6 py-3 rounded-lg font-semibold text-sm transition-all shadow-[0_0_15px_rgba(79,70,229,0.4)] hover:shadow-[0_0_25px_rgba(79,70,229,0.6)] flex items-center gap-2"
-            >
-              {surging ? 'Executing...' : 'Execute Surge Protocol'}
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={handleSurge}
+                disabled={surging || !popularRoute.route}
+                className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 text-white px-6 py-3 rounded-lg font-semibold text-sm transition-all shadow-[0_0_15px_rgba(79,70,229,0.4)] hover:shadow-[0_0_25px_rgba(79,70,229,0.6)] flex items-center gap-2"
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M13 10V3L4 14h7v7l9-11h-7z"
-                ></path>
-              </svg>
-            </button>
+                {surging ? 'Executing...' : 'Execute Surge Protocol'}
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                </svg>
+              </button>
+              <button
+                onClick={handlePurge}
+                disabled={purging}
+                className="bg-rose-600 hover:bg-rose-500 disabled:bg-slate-700 text-white px-6 py-3 rounded-lg font-semibold text-sm transition-all flex items-center gap-2"
+              >
+                {purging ? 'Purging...' : 'Purge Expired Bookings'}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -208,24 +241,12 @@ export default function Dashboard() {
                 Optimal Route
               </h3>
               <p className="text-2xl font-bold text-white truncate">
-                {popularRoute.route
-                  ? popularRoute.route.name
-                  : 'No data'}
+                {popularRoute.route ? popularRoute.route.name : 'No data'}
               </p>
             </div>
             <p className="text-sm text-cyan-400 font-medium mt-4 flex items-center gap-2">
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
-                ></path>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
               </svg>
               {popularRoute.count} active signals
             </p>
@@ -236,13 +257,18 @@ export default function Dashboard() {
         <section>
           <h2 className="text-xl font-bold text-white mb-6">Route Operations</h2>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {routes.map((route) => (
-              <RouteAdminCard
-                key={route.id}
-                route={route}
-                onUpdate={refreshRoutes}
-              />
-            ))}
+            {routes.map((route) => {
+              const stats = getRouteStats(route.id);
+              return (
+                <RouteAdminCard
+                  key={route.id}
+                  route={route}
+                  remaining={stats.remaining}
+                  currentPrice={stats.currentPrice}
+                  onUpdate={refreshRoutes}
+                />
+              );
+            })}
           </div>
         </section>
       </div>
@@ -252,12 +278,16 @@ export default function Dashboard() {
 
 function RouteAdminCard({
   route,
+  remaining,
+  currentPrice,
   onUpdate,
 }: {
   route: Route;
+  remaining: number;
+  currentPrice: number;
   onUpdate: () => void;
 }) {
-  const [price, setPrice] = useState(route.price);
+  const [price, setPrice] = useState(route.base_price);
   const [seats, setSeats] = useState(10);
   const [updating, setUpdating] = useState(false);
 
@@ -295,20 +325,25 @@ function RouteAdminCard({
               {route.origin} → {route.destination}
             </p>
           )}
+          {route.departure_time && (
+            <p className="text-sm text-indigo-300 mt-1">
+              Departure: {route.departure_time}
+            </p>
+          )}
         </div>
         <div className="text-right">
-          <p className="text-xs text-slate-500 uppercase tracking-widest">
-            Available Seats
-          </p>
-          <p className="text-2xl font-bold text-cyan-400">
-            {typeof route.available_seats === 'number' ? route.available_seats : '-'}
+          <p className="text-xs text-slate-500 uppercase tracking-widest">Current Price</p>
+          <p className="text-2xl font-bold text-emerald-400">₦{currentPrice.toLocaleString()}</p>
+          <p className="text-xs text-slate-500 uppercase tracking-widest mt-2">Remaining Seats</p>
+          <p className={`text-2xl font-bold ${remaining < 4 ? 'text-rose-400' : 'text-cyan-400'}`}>
+            {remaining}
           </p>
         </div>
       </div>
       <div className="flex flex-col sm:flex-row gap-4">
         <div className="flex-1">
           <label className="block text-xs text-slate-500 uppercase tracking-widest mb-1">
-            Price (₦)
+            Base Price (₦)
           </label>
           <div className="flex gap-2">
             <input
