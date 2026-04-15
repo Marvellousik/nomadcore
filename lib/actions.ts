@@ -67,3 +67,14 @@ export async function expireOldBookings() {
   revalidatePath('/');
   return true;
 }
+
+export async function confirmAllPendingBookings() {
+  const { error } = await supabaseServer
+    .from('bookings')
+    .update({ status: 'confirmed' })
+    .eq('status', 'pending');
+
+  if (error) throw new Error(error.message);
+  revalidatePath('/');
+  return true;
+}

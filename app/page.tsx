@@ -13,6 +13,7 @@ import {
   applySurgeProtocol,
   scheduleOverflowBus,
   expireOldBookings,
+  confirmAllPendingBookings,
 } from '../lib/actions';
 import { computeDynamicPrice } from '../lib/pricing';
 import type { Route, Booking } from '../lib/mockData';
@@ -24,6 +25,7 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [surging, setSurging] = useState(false);
   const [purging, setPurging] = useState(false);
+  const [confirming, setConfirming] = useState(false);
 
   async function refreshRoutes() {
     const { data } = await supabase.from('routes').select('*').order('name');
@@ -120,6 +122,18 @@ export default function Dashboard() {
     }
   }
 
+  async function handleConfirmAll() {
+    setConfirming(true);
+    try {
+      await confirmAllPendingBookings();
+      await refreshBookings();
+    } catch (e: any) {
+      alert('Failed to confirm pending bookings: ' + e.message);
+    } finally {
+      setConfirming(false);
+    }
+  }
+
   function getRouteStats(routeId: number) {
     const route = routes.find((r) => r.id === routeId);
     if (!route) return { remaining: 0, currentPrice: 0 };
@@ -210,6 +224,13 @@ export default function Dashboard() {
                 className="bg-rose-600 hover:bg-rose-500 disabled:bg-slate-700 text-white px-6 py-3 rounded-lg font-semibold text-sm transition-all flex items-center gap-2"
               >
                 {purging ? 'Purging...' : 'Purge Expired Bookings'}
+              </button>
+              <button
+                onClick={handleConfirmAll}
+                disabled={confirming}
+                className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 text-white px-6 py-3 rounded-lg font-semibold text-sm transition-all flex items-center gap-2"
+              >
+                {confirming ? 'Confirming...' : 'Confirm All Pending'}
               </button>
             </div>
           </div>
